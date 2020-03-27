@@ -9,6 +9,8 @@ use sdl2::render::WindowCanvas;
 use std::vec::Vec;
 use std::cmp;
 use std::{thread, time};
+use std::fs::File;
+use std::io::{BufRead, BufReader};
 /*
 #[derive(PartialEq)]
 enum Actions {
@@ -24,6 +26,7 @@ struct Player {
 	x: i32,
 	y: i32,
 	g: i32,
+	in_air: bool,
 }
 /*
 impl Player {
@@ -36,26 +39,25 @@ impl Player {
 	}
 }
 */
-const LEVEL_SIZE: usize = 20;
 const BLOCK_SIZE: i32 = 40;
 const SCREEN_WIDTH: i32 = 640;
 const SCREEN_HEIGHT: i32 = 480;
 
-fn render(canvas: &mut WindowCanvas, player: &Player, lvl : [[bool; LEVEL_SIZE]; LEVEL_SIZE]) {
-	// Player position on screen
+fn render(canvas: &mut WindowCanvas, player: &Player, blocks: &Vec::<(i32, i32)>, level_width: i32, level_height: i32) {
+	// Camera's position so the player is centered on screen
 	let mut camx = SCREEN_WIDTH / 2 - player.x - BLOCK_SIZE / 2;
 	let mut camy = SCREEN_HEIGHT / 2 - player.y - BLOCK_SIZE / 2;
 
 	// Limit the camera's position range
 	camx = cmp::min(camx, 0);
-	camx = cmp::max(camx, -(BLOCK_SIZE * LEVEL_SIZE as i32) + SCREEN_WIDTH);
+	camx = cmp::max(camx, -(BLOCK_SIZE * level_width) + SCREEN_WIDTH);
 
 	camy = cmp::min(camy, 0);
-	camy = cmp::max(camy, -(BLOCK_SIZE * LEVEL_SIZE as i32) + SCREEN_HEIGHT);
+	camy = cmp::max(camy, -(BLOCK_SIZE * level_height) + SCREEN_HEIGHT);
 
 	// Background
-    canvas.set_draw_color(Color::RGB(0, 128, 0));
-    canvas.clear();
+	canvas.set_draw_color(Color::RGB(0, 128, 0));
+	canvas.clear();
 
 	// Draw player
 	canvas.set_draw_color(Color::RGB(0, 0, 0));
@@ -63,13 +65,8 @@ fn render(canvas: &mut WindowCanvas, player: &Player, lvl : [[bool; LEVEL_SIZE];
 
 	// Draw level
 	canvas.set_draw_color(Color::RGB(80, 40, 13));
-	for i in 0..lvl.len() {
-		for j in 0..lvl[0].len() {
-			if lvl[i][j] {
-				let _ = canvas.fill_rect(Rect::new(camx + j as i32 * BLOCK_SIZE,
-					camy + i as i32 * BLOCK_SIZE, BLOCK_SIZE as u32, BLOCK_SIZE as u32));
-			}
-		}
+	for block in blocks {
+		let _ = canvas.fill_rect(Rect::new(camx + block.0, camy + block.1, BLOCK_SIZE as u32, BLOCK_SIZE as u32));
 	}
 
 	// Display to screen
@@ -90,68 +87,50 @@ fn aabb_test(e1x: i32, e1y: i32, e1s: i32, e2x: i32, e2y: i32, e2s: i32) -> bool
 fn main() -> Result<(), String> {
 	// Init player
 	let mut player = Player {
-		x: 128, y: 64, g: 0
+		x: 128, y: 64, g: 0, in_air: true
 	};
 
 	/****************************** LEVEL LOADING ******************************/
 
 	// Create level
-	let mut level: [[bool; LEVEL_SIZE]; LEVEL_SIZE] = [[false; LEVEL_SIZE]; LEVEL_SIZE];
-
-	// spawn spots
 	let mut spawn_spots = Vec::<(i32, i32)>::new();
-
 	let mut blocks = Vec::<(i32, i32)>::new();
+	let mut level_width = 0;
+	let mut level_height = 0;
 
-	// load from this for now, load from a file later
-	let lvlstrs: [String; LEVEL_SIZE] = 
-	[
-		String::from("####################"),
-		String::from("#....$.............#"),
-		String::from("#..................#"),
-		String::from("#........####....###"),
-		String::from("#.#######..........#"),
+	// Load a level from a file
+	let f = File::open("res/level1.txt").expect("Error: Unable to open level.");
+	let f = BufReader::new(f);
 
-		String::from("#..................#"),
-		String::from("#................###"),
-		String::from("#.......#######....#"),
-		String::from("#..................#"),
-		String::from("#.................##"),
+	for (i, line) in f.lines().enumerate() {
+		let line = line.expect("Unable to read line.");
 
-		String::from("#...########.......#"),
-		String::from("#..................#"),
-		String::from("#........######....#"),
-		String::from("#...#.............##"),
-		String::from("#..................#"),
+		level_height += 1;
+		level_width = cmp::max(level_width, line.len() as i32);
 
-		String::from("########...........#"),
-		String::from("#...........###....#"),
-		String::from("#..................#"),
-		String::from("#..................#"),
-		String::from("####################"),
-	];	
-
-	for (i, line) in lvlstrs.iter().enumerate() {
 		for (j, c) in line.chars().enumerate() {
+			let i = i as i32;
+			let j = j as i32;
+
 			if c == '#' {
-				level[i][j] = true;
-				blocks.push((j as i32 * BLOCK_SIZE, i as i32 * BLOCK_SIZE));
+				blocks.push((j * BLOCK_SIZE, i * BLOCK_SIZE));
 			} else if c == '$' {
-				player.x = j as i32 * BLOCK_SIZE;
-				player.y = i as i32 * BLOCK_SIZE;
-				spawn_spots.push((j as i32 * BLOCK_SIZE, i as i32 * BLOCK_SIZE));
+				player.x = j * BLOCK_SIZE;
+				player.y = i * BLOCK_SIZE;
+				spawn_spots.push((j * BLOCK_SIZE, i * BLOCK_SIZE));
 			}
 			print!("{}", c);
 		}
 		print!("\n");
 	}
 
+
 	/****************************** INIT SDL2 ******************************/
 
 	let sdl_context = sdl2::init()?;
 	let video_subsystem = sdl_context.video()?;
 
-	let window = video_subsystem.window("Window", SCREEN_WIDTH as u32, SCREEN_HEIGHT as u32)
+	let window = video_subsystem.window("Rust Game", SCREEN_WIDTH as u32, SCREEN_HEIGHT as u32)
 		.position_centered()
 		.build()
 		.expect("Error: could not create window.");
@@ -165,8 +144,6 @@ fn main() -> Result<(), String> {
 	let mut event_pump = sdl_context.event_pump()?;
 
 	let mut quit = false;
-
-	let mut in_air = true;
 
 	// Keys
 	let mut key_left = false;
@@ -241,9 +218,9 @@ fn main() -> Result<(), String> {
 
 		// Jump.
 		// The player is allowed to jump in-air shortly after falling to make jumps easier.
-		if key_up && !in_air && player.g < 4 {
+		if key_up && !player.in_air && player.g < 4 {
 			player.g = -16;
-			in_air = true;
+			player.in_air = true;
 		}
 
 		// Apply gravity
@@ -266,14 +243,14 @@ fn main() -> Result<(), String> {
 				// Player hit obstacle with his feet
 				if block.1 > player.y {
 					player.y = block.1 - BLOCK_SIZE;
-					in_air = false;
+					player.in_air = false;
 				}
 			}
 		}
 
 		/****************************** EPILOGUE ******************************/
 
-		render(&mut canvas, &player, level);
+		render(&mut canvas, &player, &blocks, level_width, level_height);
 
 		thread::sleep(time::Duration::from_millis(1000 / 60));
 	}
