@@ -55,9 +55,13 @@ fn render(canvas: &mut WindowCanvas, player: &Player, blocks: &Vec::<(i32, i32)>
 	camy = cmp::min(camy, 0);
 	camy = cmp::max(camy, -(BLOCK_SIZE * level_height) + SCREEN_HEIGHT);
 
-	// Background
-	canvas.set_draw_color(Color::RGB(0, 128, 0));
+	// Window background
+	canvas.set_draw_color(Color::RGB(0, 0, 0));
 	canvas.clear();
+
+	// Game background
+	canvas.set_draw_color(Color::RGB(0, 128, 0));
+	let _ = canvas.fill_rect(Rect::new(0, 0, SCREEN_WIDTH as u32, SCREEN_HEIGHT as u32));
 
 	// Draw player
 	canvas.set_draw_color(Color::RGB(0, 0, 0));
@@ -132,12 +136,15 @@ fn main() -> Result<(), String> {
 
 	let window = video_subsystem.window("Rust Game", SCREEN_WIDTH as u32, SCREEN_HEIGHT as u32)
 		.position_centered()
+		.resizable()
 		.build()
 		.expect("Error: could not create window.");
 
 	let mut canvas = window.into_canvas()
 		.build()
 		.expect("Error: could not create canvas.");
+
+	let _ = canvas.set_logical_size(SCREEN_WIDTH as u32, SCREEN_HEIGHT as u32);
 
 	/****************************** EVENTS AND ACTIONS ******************************/
 
@@ -152,7 +159,7 @@ fn main() -> Result<(), String> {
 //	let mut key_down = false;
 //	let mut key_space = false;
 
-	/****************************** MAIN LOOP ******************************/
+	/****************************** GAME LOOP ******************************/
 
 	while !quit {
 
@@ -254,6 +261,8 @@ fn main() -> Result<(), String> {
 
 		thread::sleep(time::Duration::from_millis(1000 / 60));
 	}
+
+	/****************************** EXIT ******************************/
 
 	Ok(())
 }
