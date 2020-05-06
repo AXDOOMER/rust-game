@@ -1,4 +1,7 @@
 extern crate sdl2;
+extern crate rand;
+
+mod utils;
 
 use sdl2::pixels::Color;
 use sdl2::rect::Rect;
@@ -6,44 +9,95 @@ use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::render::WindowCanvas;
 
+use rand::Rng;
+
 use std::vec::Vec;
 use std::cmp;
 use std::{thread, time};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
-/*
-#[derive(PartialEq)]
-enum Actions {
-	Up,
-	Down,
-	Left,
-	Right,
-	Jump,
-	Shoot,
+
+struct Level {
+
+	player: Player,
+
+	level_width: i32,
+	level_height: i32,
+
+	// Entities
+	spawn_spots: Vec::<(i32, i32)>,
+	blocks: Vec::<(i32, i32)>,
+	drones: Vec::<Drone>,	// Enemy AI
+	bullets: Vec::<Bullet>,
 }
-*/
+
+struct Game {
+
+	events: Events,
+
+	rng: rand::rngs::ThreadRng,
+
+	sdl_context: sdl2::Sdl,
+
+	canvas: sdl2::render::Canvas<sdl2::video::Window>,
+}
+
+struct Events {
+
+	event_pump: sdl2::EventPump,
+
+	quit: bool,
+
+	// Keys
+	key_left: bool,
+	key_right: bool,
+	key_up: bool,
+
+	key_attack: bool,
+	key_fullscreen: bool,
+
+	set_fullscreen: i32,
+	set_shoot: i32,
+}
+
 struct Player {
 	x: i32,
 	y: i32,
 	g: i32,
 	in_air: bool,
-}
-/*
-impl Player {
-	pub fn get_x(&self) -> i32 {
-		self.x
-	}
+	alive: bool,
 
-	pub fn get_y(&self) -> i32 {
-		self.y
-	}
+	// Player's direction
+	going_right: bool,
 }
-*/
+
+struct Drone {
+	x: i32,
+	y: i32,
+	pursuit: i32,
+//	shoot: i32,
+	health: i32,
+
+	going_right: bool,
+	shoot_timer: i32,
+}
+
+struct Bullet {
+	x: i32,
+	y: i32,
+
+	going_right: bool,
+
+	// Bullet's source
+	source_is_drone: bool,
+}
+
 const BLOCK_SIZE: i32 = 40;
+const BULLET_SIZE: i32 = 8;
 const SCREEN_WIDTH: i32 = 640;
 const SCREEN_HEIGHT: i32 = 480;
 
-fn render(canvas: &mut WindowCanvas, player: &Player, blocks: &Vec::<(i32, i32)>, level_width: i32, level_height: i32) {
+fn render(canvas: &mut WindowCanvas, player: &Player, drones: &Vec::<Drone>, bullets: &Vec::<Bullet>, blocks: &Vec::<(i32, i32)>, level_width: i32, level_height: i32) {
 	// Camera's position so the player is centered on screen
 	let mut camx = SCREEN_WIDTH / 2 - player.x - BLOCK_SIZE / 2;
 	let mut camy = SCREEN_HEIGHT / 2 - player.y - BLOCK_SIZE / 2;
@@ -65,7 +119,32 @@ fn render(canvas: &mut WindowCanvas, player: &Player, blocks: &Vec::<(i32, i32)>
 
 	// Draw player
 	canvas.set_draw_color(Color::RGB(0, 0, 0));
-	let _ = canvas.fill_rect(Rect::new(camx + player.x, camy + player.y, 40, 40));
+	if player.alive {
+		let _ = canvas.fill_rect(Rect::new(camx + player.x, camy + player.y, 40, 40));
+	} else {
+		let _ = canvas.fill_rect(Rect::new(camx + player.x, camy + player.y + 22, 40, 18));
+	}
+
+	canvas.set_draw_color(Color::RGB(255, 255, 255));
+	if player.going_right {
+		let _ = canvas.fill_rect(Rect::new(camx + player.x + 20, camy + player.y + 20, 18, 4));
+	} else {
+		let _ = canvas.fill_rect(Rect::new(camx + player.x + 2, camy + player.y + 20, 18, 4));
+	}
+
+	// Draw enemy drones
+	canvas.set_draw_color(Color::RGB(192, 0, 0));
+	for drone in drones {
+		let _ = canvas.fill_rect(Rect::new(camx + drone.x, camy + drone.y, BLOCK_SIZE as u32, BLOCK_SIZE as u32));
+	}
+
+	// Draw bullets
+	canvas.set_draw_color(Color::RGB(255, 255, 0));
+	for bullet in bullets {
+//		if bullet.x >= player.x - SCREEN_WIDTH && bullet.x <= player.x + SCREEN_WIDTH {
+			let _ = canvas.fill_rect(Rect::new(camx + bullet.x, camy + bullet.y, BULLET_SIZE as u32, BULLET_SIZE as u32));
+//		}
+	}
 
 	// Draw level
 	canvas.set_draw_color(Color::RGB(80, 40, 13));
@@ -77,57 +156,8 @@ fn render(canvas: &mut WindowCanvas, player: &Player, blocks: &Vec::<(i32, i32)>
     canvas.present();
 }
 
-// AABB collision test: https://tutorialedge.net/gamedev/aabb-collision-detection-tutorial/
-fn aabb_test(e1x: i32, e1y: i32, e1s: i32, e2x: i32, e2y: i32, e2s: i32) -> bool {
-	if e1x < e2x + e2s &&
-		e1x + e1s > e2x &&
-		e1y < e2y + e2s &&
-		e1y + e1s > e2y {
-		return true;
-	}
-	return false;
-}
 
 fn main() -> Result<(), String> {
-	// Init player
-	let mut player = Player {
-		x: 128, y: 64, g: 0, in_air: true
-	};
-
-	/****************************** LEVEL LOADING ******************************/
-
-	// Create level
-	let mut spawn_spots = Vec::<(i32, i32)>::new();
-	let mut blocks = Vec::<(i32, i32)>::new();
-	let mut level_width = 0;
-	let mut level_height = 0;
-
-	// Load a level from a file
-	let f = File::open("res/level1.txt").expect("Error: Unable to open level.");
-	let f = BufReader::new(f);
-
-	for (i, line) in f.lines().enumerate() {
-		let line = line.expect("Unable to read line.");
-
-		level_height += 1;
-		level_width = cmp::max(level_width, line.len() as i32);
-
-		for (j, c) in line.chars().enumerate() {
-			let i = i as i32;
-			let j = j as i32;
-
-			if c == '#' {
-				blocks.push((j * BLOCK_SIZE, i * BLOCK_SIZE));
-			} else if c == '$' {
-				player.x = j * BLOCK_SIZE;
-				player.y = i * BLOCK_SIZE;
-				spawn_spots.push((j * BLOCK_SIZE, i * BLOCK_SIZE));
-			}
-			print!("{}", c);
-		}
-		print!("\n");
-	}
-
 
 	/****************************** INIT SDL2 ******************************/
 
@@ -137,6 +167,7 @@ fn main() -> Result<(), String> {
 	let window = video_subsystem.window("Rust Game", SCREEN_WIDTH as u32, SCREEN_HEIGHT as u32)
 		.position_centered()
 		.resizable()
+		/*.opengl()*/
 		.build()
 		.expect("Error: could not create window.");
 
@@ -146,39 +177,123 @@ fn main() -> Result<(), String> {
 
 	let _ = canvas.set_logical_size(SCREEN_WIDTH as u32, SCREEN_HEIGHT as u32);
 
+	sdl2::hint::set_video_minimize_on_focus_loss(false);
+
+	/****************************** GAME STRUCTURES ******************************/
+
+	let mut g: Game;
+	let mut lvl: Level;
+
+	lvl = Level {
+		// Init player
+		player: Player {
+			x: 128, y: 64, g: 0, in_air: true, going_right: true, alive: true
+		},
+
+		level_width: 0,
+		level_height: 0,
+
+		// Init entities
+		spawn_spots: Vec::<(i32, i32)>::new(),
+		blocks: Vec::<(i32, i32)>::new(),
+		drones: Vec::<Drone>::new(),	// Enemy AI
+		bullets: Vec::<Bullet>::new(),
+	};
+
 	/****************************** EVENTS AND ACTIONS ******************************/
 
-	let mut event_pump = sdl_context.event_pump()?;
+	g = Game {
 
-	let mut quit = false;
+		events: Events {
 
-	// Keys
-	let mut key_left = false;
-	let mut key_right = false;
-	let mut key_up = false;
-//	let mut key_down = false;
-//	let mut key_space = false;
+			event_pump: sdl_context.event_pump()?,
+
+			quit: false,
+
+			// Keys
+			key_left: false,
+			key_right: false,
+			key_up: false,
+
+			key_attack: false,
+			key_fullscreen: false,
+
+			set_fullscreen: 0,
+			set_shoot: 0,
+		},
+
+		rng: rand::thread_rng(),
+
+		sdl_context: sdl_context,
+
+		canvas: canvas,
+	};
+
+
+	/****************************** LEVEL LOADING ******************************/
+
+	// Create level
+	lvl.level_width = 0;
+	lvl.level_height = 0;
+
+	// Load a level from a file
+	let f = File::open("res/level3.txt").expect("Error: Unable to open level.");
+	let f = BufReader::new(f);
+
+	for (i, line) in f.lines().enumerate() {
+		let line = line.expect("Unable to read line.");
+
+		lvl.level_height += 1;
+		lvl.level_width = cmp::max(lvl.level_width, line.len() as i32);
+
+		for (j, c) in line.chars().enumerate() {
+			let i = i as i32;
+			let j = j as i32;
+
+			if c == '#' {
+				lvl.blocks.push((j * BLOCK_SIZE, i * BLOCK_SIZE));
+			} else if c == 'd' {
+				let drone = Drone {
+					x: j * BLOCK_SIZE,
+					y: i * BLOCK_SIZE,
+					pursuit: 0,
+					going_right: true,
+					health: 3,
+					shoot_timer: 0,
+				};
+				lvl.drones.push(drone);
+			} else if c == '$' {
+				lvl.player.x = j * BLOCK_SIZE;
+				lvl.player.y = i * BLOCK_SIZE;
+				lvl.spawn_spots.push((j * BLOCK_SIZE, i * BLOCK_SIZE));
+			}
+			print!("{}", c);
+		}
+		print!("\n");
+	}
 
 	/****************************** GAME LOOP ******************************/
 
-	while !quit {
+	while !g.events.quit {
 
 		/****************************** EVENT LOOP ******************************/
 
 		// Catch events
-		for event in event_pump.poll_iter() {
+		for event in g.events.event_pump.poll_iter() {
 			match event {
 				// Game control
-				Event::Quit {..} | Event::KeyDown { keycode: Some(Keycode::Escape), .. } => quit = true,
+				Event::Quit {..} | Event::KeyDown { keycode: Some(Keycode::Escape), .. } => g.events.quit = true,
 
 				// Player control
 				Event::KeyDown { keycode, .. } => {
 					match keycode {
-						Some(Keycode::Left) => key_left = true,
-						Some(Keycode::Right) => key_right = true,
-						Some(Keycode::Up) => key_up = true,
+						Some(Keycode::Left) => g.events.key_left = true,
+						Some(Keycode::Right) => g.events.key_right = true,
+						Some(Keycode::Up) => g.events.key_up = true,
 //						Some(Keycode::Down) => key_down = true,
-//						Some(Keycode::Space) => key_space = true,
+						Some(Keycode::Space) | Some(Keycode::LCtrl) => g.events.key_attack = true,
+
+						Some(Keycode::F4) => g.events.key_fullscreen = true,
 
 						_ => {}
 					}
@@ -186,11 +301,13 @@ fn main() -> Result<(), String> {
 
 				Event::KeyUp { keycode, .. } => {
 					match keycode {
-						Some(Keycode::Left) => key_left = false,
-						Some(Keycode::Right) => key_right = false,
-						Some(Keycode::Up) => key_up = false,
+						Some(Keycode::Left) => g.events.key_left = false,
+						Some(Keycode::Right) => g.events.key_right = false,
+						Some(Keycode::Up) => g.events.key_up = false,
 //						Some(Keycode::Down) => key_down = false,
-//						Some(Keycode::Space) => key_space = false,
+						Some(Keycode::Space) | Some(Keycode::LCtrl) => g.events.key_attack = false,
+
+						Some(Keycode::F4) => g.events.key_fullscreen = false,
 
 						_ => {}
 					}
@@ -200,64 +317,279 @@ fn main() -> Result<(), String> {
 			}
 		}
 
+
+		if g.events.key_fullscreen {
+			g.events.set_fullscreen += 1
+		} else {
+			g.events.set_fullscreen = 0;
+		}
+
+		if g.events.set_fullscreen == 1 && g.canvas.window_mut().fullscreen_state() == sdl2::video::FullscreenType::Off {
+			let _ = g.canvas.window_mut().set_fullscreen(sdl2::video::FullscreenType::Desktop);
+			g.sdl_context.mouse().show_cursor(false);
+		} else if g.events.set_fullscreen == 1 && g.canvas.window_mut().fullscreen_state() == sdl2::video::FullscreenType::Desktop {
+			let _ = g.canvas.window_mut().set_fullscreen(sdl2::video::FullscreenType::Off);
+			g.sdl_context.mouse().show_cursor(true);
+		}
+
+/*		if key_fullscreen {
+			canvas.window_mut().maximize();
+		}*/
+
 		/****************************** MOVEMENT AND PHYSICS ******************************/
 
 		// Test one axis at the time. This is so the player can properly slide against walls.
 		// https://www.reddit.com/r/gamedev/comments/qijw6/collision_detection_why_does_notch_do_separate_x/
 		// https://gist.github.com/mrspeaker/1978410
 
-		if key_left { player.x -= 8; }
-		if key_right { player.x += 8; }
+		if lvl.player.alive {
+			if g.events.key_left {
+				lvl.player.x -= 8;
+				lvl.player.going_right = false;
+			}
 
-		for block in &blocks {
-			if aabb_test(player.x, player.y, BLOCK_SIZE, block.0, block.1, BLOCK_SIZE) {
-				// Player hit obstacle on his left
-				if block.0 < player.x {
-					player.x = block.0 + BLOCK_SIZE;
-				}
+			if g.events.key_right {
+				lvl.player.x += 8;
+				lvl.player.going_right = true;
+			}
 
-				// Player hit obstacle on his right
-				if block.0 > player.x {
-					player.x = block.0 - BLOCK_SIZE;
+			for block in &lvl.blocks {
+				if utils::aabb_test(lvl.player.x, lvl.player.y, BLOCK_SIZE, block.0, block.1, BLOCK_SIZE) {
+					// Player hit obstacle on his left
+					if block.0 < lvl.player.x {
+						lvl.player.x = block.0 + BLOCK_SIZE;
+					}
+
+					// Player hit obstacle on his right
+					if block.0 > lvl.player.x {
+						lvl.player.x = block.0 - BLOCK_SIZE;
+					}
 				}
 			}
-		}
 
-		// Jump.
-		// The player is allowed to jump in-air shortly after falling to make jumps easier.
-		if key_up && !player.in_air && player.g < 4 {
-			player.g = -16;
-			player.in_air = true;
+			// Jump.
+			// The player is allowed to jump in-air until he reaches a certain falling speed.
+			// This short jump extension makes jump timing easier.
+			if g.events.key_up && !lvl.player.in_air && lvl.player.g < 4 {
+				lvl.player.g = -16;
+				lvl.player.in_air = true;
+			}
 		}
 
 		// Apply gravity
-		player.y += player.g;
+		lvl.player.y += lvl.player.g;
 
 		// When player is falling, cap the maximum falling speed
-		if player.g < 16 {
-			player.g += 1;
+		if lvl.player.g < 16 {
+			lvl.player.g += 1;
 		}
 
-		for block in &blocks {
-			if aabb_test(player.x, player.y, BLOCK_SIZE, block.0, block.1, BLOCK_SIZE) {
-				player.g = 0;
+		for block in &lvl.blocks {
+			if utils::aabb_test(lvl.player.x, lvl.player.y, BLOCK_SIZE, block.0, block.1, BLOCK_SIZE) {
+				lvl.player.g = 0;
 
 				// Player hit obstacle with his head
-				if block.1 < player.y {
-					player.y = block.1 + BLOCK_SIZE;
+				if block.1 < lvl.player.y {
+					lvl.player.y = block.1 + BLOCK_SIZE;
 				}
 
 				// Player hit obstacle with his feet
-				if block.1 > player.y {
-					player.y = block.1 - BLOCK_SIZE;
-					player.in_air = false;
+				if block.1 > lvl.player.y {
+					lvl.player.y = block.1 - BLOCK_SIZE;
+					lvl.player.in_air = false;
 				}
 			}
+		}
+
+		// Touching an enemy kills
+		if lvl.player.alive {
+			for drone in &mut lvl.drones {
+				if utils::aabb_test(lvl.player.x, lvl.player.y, BLOCK_SIZE, drone.x, drone.y, BLOCK_SIZE) {
+					lvl.player.alive = false;
+				}
+			}
+		}
+
+		/****************************** PLAYER FIRES BULLETS ******************************/
+
+		if g.events.key_attack && lvl.player.alive {
+			g.events.set_shoot += 1
+		} else {
+			g.events.set_shoot = 0;
+		}
+
+		if g.events.set_shoot % 10 == 1 {
+			let bullet = Bullet {
+				x: if lvl.player.going_right { lvl.player.x + 40 - 8 } else { lvl.player.x },
+				y: lvl.player.y + 18,
+				going_right: lvl.player.going_right,
+				source_is_drone: false,
+			};
+			lvl.bullets.push(bullet);
+		}
+
+		/****************************** BULLETS MANAGEMENT ******************************/
+
+		// Move bullets are different speed depending on who shoot them
+		for bullet in &mut lvl.bullets {
+			let mut bullet_speed = 20;
+			if bullet.source_is_drone {
+				bullet_speed = 10;
+			}
+
+			if bullet.going_right {
+				bullet.x += bullet_speed;
+			} else {
+				bullet.x -= bullet_speed;
+			}
+		}
+
+		// Bullets hits on a drone removes health
+		for i in (0..lvl.drones.len()).rev() {
+			for j in (0..lvl.bullets.len()).rev() {
+				if utils::aabb_test(lvl.bullets[j].x, lvl.bullets[j].y, BULLET_SIZE, lvl.drones[i].x, lvl.drones[i].y, BLOCK_SIZE) {
+					if lvl.drones[i].health > 1 {
+						lvl.drones[i].health -= 1;
+					} else {
+						lvl.drones.remove(i);
+					}
+					lvl.bullets.remove(j);
+					break;
+				}
+			}
+		}
+
+		// Bullet hits on a player kills him
+		for i in (0..lvl.bullets.len()).rev() {
+			if utils::aabb_test(lvl.bullets[i].x, lvl.bullets[i].y, BULLET_SIZE, lvl.player.x, lvl.player.y, BLOCK_SIZE) {
+				if lvl.player.alive {
+					lvl.bullets.remove(i);
+					lvl.player.alive = false;
+				}
+			}
+		}
+
+		// Delete bullets that hit walls
+		for block in &mut lvl.blocks {
+			lvl.bullets.retain(|i| !utils::aabb_test(i.x, i.y, BULLET_SIZE, block.0, block.1, BLOCK_SIZE));
+		}
+
+
+		/****************************** ENEMY AI ******************************/
+
+		for drone in &mut lvl.drones {
+
+			let mut is_close = utils::distance2d(lvl.player.x, lvl.player.y, drone.x, drone.y) < 280;
+
+			let mut line_of_sight = true;
+
+			// Always increment shoot timer. It's set to 0 when the drone shoots.
+			drone.shoot_timer += 1;
+
+			for block in &lvl.blocks {
+				let intersec =
+					utils::line2box(lvl.player.x + BLOCK_SIZE / 2, lvl.player.y + BLOCK_SIZE / 2,
+						drone.x + BLOCK_SIZE / 2, drone.y + BLOCK_SIZE / 2,
+						block.0, block.1, BLOCK_SIZE);
+
+				if intersec {
+					// Drone can's see the player
+					is_close = false;
+					line_of_sight = false;
+					//break;
+				}
+			}
+
+			// Decrease the pursuit counter when the player is out of range
+			if !is_close && drone.pursuit > 0 {
+				drone.pursuit -= 1;
+			}
+
+			if is_close || drone.pursuit > 30 {
+
+				if is_close && drone.pursuit < 120 {
+					drone.pursuit += 2;
+				}
+
+				let dx = (lvl.player.x - drone.x).abs();
+				let dy = (lvl.player.y - drone.y).abs();
+
+				// Check the direction to move
+
+				// Drones try to lineup with the player on the Y axis first
+				if dy > 16 {
+
+					if drone.y < lvl.player.y {
+						drone.y += 6;
+					} else if drone.y > lvl.player.y {
+						drone.y -= 6;
+					}
+
+					// Check collisions on the Y axis
+					for block in &lvl.blocks {
+						if utils::aabb_test(drone.x, drone.y, BLOCK_SIZE, block.0, block.1, BLOCK_SIZE) {
+							// Drone hit obstacle above
+							if block.1 < drone.y {
+								drone.y = block.1 + BLOCK_SIZE;
+							}
+
+							// Drone hit obstacle below
+							if block.1 > drone.y {
+								drone.y = block.1 - BLOCK_SIZE;
+							}
+						}
+					}
+				} else {
+					// In the way of a shot
+					let random_number = g.rng.gen::<u32>();
+
+					// Shoot chance
+					if random_number % 30 == 0 && drone.shoot_timer > 90 {
+						let bullet = Bullet {
+							x: if drone.x < lvl.player.x { drone.x + 40 } else { drone.x - 8 },
+							y: drone.y + 18,
+							going_right: drone.x < lvl.player.x,
+							source_is_drone: true,
+						};
+
+						lvl.bullets.push(bullet);
+						drone.shoot_timer = 0;
+					}
+				}
+
+				if dx > 100 || !line_of_sight {
+
+					if drone.x < lvl.player.x {
+						drone.x += 4;
+					} else if drone.x > lvl.player.x {
+						drone.x -= 4;
+					}
+
+					// Check collisions on the X axis
+					for block in &lvl.blocks {
+						if utils::aabb_test(drone.x, drone.y, BLOCK_SIZE, block.0, block.1, BLOCK_SIZE) {
+							// Drone hit obstacle on his left
+							if block.0 < drone.x {
+								drone.x = block.0 + BLOCK_SIZE;
+							}
+
+							// Drone hit obstacle on his right
+							if block.0 > drone.x {
+								drone.x = block.0 - BLOCK_SIZE;
+							}
+						}
+					}
+				}
+
+
+			}/* else {
+				drone.pursuit = 0;
+			}*/
 		}
 
 		/****************************** EPILOGUE ******************************/
 
-		render(&mut canvas, &player, &blocks, level_width, level_height);
+		render(&mut g.canvas, &lvl.player, &lvl.drones, &lvl.bullets, &lvl.blocks, lvl.level_width, lvl.level_height);
 
 		thread::sleep(time::Duration::from_millis(1000 / 60));
 	}
