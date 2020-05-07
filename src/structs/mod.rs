@@ -65,27 +65,6 @@ pub struct Player {
 
 impl Player
 {
-	pub fn draw(interface: impl monTrait)
-	{
-
-        interface.maFunc();
-
-		/*// Draw player
-	    canvas.set_draw_color(Color::RGB(0, 0, 0));
-	    if self.alive {
-		    let _ = canvas.fill_rect(Rect::new(camx + self.x, camy + self.y, 40, 40));
-	    } else {
-		    let _ = canvas.fill_rect(Rect::new(camx + self.x, camy + self.y + 22, 40, 18));
-	    }
-
-	    canvas.set_draw_color(Color::RGB(255, 255, 255));
-	    if self.going_right {
-    		let _ = canvas.fill_rect(Rect::new(camx + self.x + 20, camy + self.y + 20, 18, 4));
-	    } else {
-		    let _ = canvas.fill_rect(Rect::new(camx + self.x + 2, camy + self.y + 20, 18, 4));
-	    }*/
-	}
-
 	pub fn new() -> Self
 	{
 		return Player {x: 0, y:0, g: 0, in_air: true, alive: true, going_right: true}
