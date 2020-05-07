@@ -1,7 +1,19 @@
 extern crate sdl2;
 extern crate rand;
 
+mod structs;
+use structs::Bullet;
+use structs::Drone;
+use structs::Events;
+use structs::Game;
+use structs::Level;
+use structs::Player;
+
 mod utils;
+use utils::aabb_test;
+use utils::distance2d;
+use utils::line2box;
+use utils::line2line;
 
 use sdl2::pixels::Color;
 use sdl2::rect::Rect;
@@ -16,81 +28,6 @@ use std::cmp;
 use std::{thread, time};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
-
-struct Level {
-
-	player: Player,
-
-	level_width: i32,
-	level_height: i32,
-
-	// Entities
-	spawn_spots: Vec::<(i32, i32)>,
-	blocks: Vec::<(i32, i32)>,
-	drones: Vec::<Drone>,	// Enemy AI
-	bullets: Vec::<Bullet>,
-}
-
-struct Game {
-
-	events: Events,
-
-	rng: rand::rngs::ThreadRng,
-
-	sdl_context: sdl2::Sdl,
-
-	canvas: sdl2::render::Canvas<sdl2::video::Window>,
-}
-
-struct Events {
-
-	event_pump: sdl2::EventPump,
-
-	quit: bool,
-
-	// Keys
-	key_left: bool,
-	key_right: bool,
-	key_up: bool,
-
-	key_attack: bool,
-	key_fullscreen: bool,
-
-	set_fullscreen: i32,
-	set_shoot: i32,
-}
-
-struct Player {
-	x: i32,
-	y: i32,
-	g: i32,
-	in_air: bool,
-	alive: bool,
-
-	// Player's direction
-	going_right: bool,
-}
-
-struct Drone {
-	x: i32,
-	y: i32,
-	pursuit: i32,
-//	shoot: i32,
-	health: i32,
-
-	going_right: bool,
-	shoot_timer: i32,
-}
-
-struct Bullet {
-	x: i32,
-	y: i32,
-
-	going_right: bool,
-
-	// Bullet's source
-	source_is_drone: bool,
-}
 
 const BLOCK_SIZE: i32 = 40;
 const BULLET_SIZE: i32 = 8;
@@ -186,9 +123,7 @@ fn main() -> Result<(), String> {
 
 	lvl = Level {
 		// Init player
-		player: Player {
-			x: 128, y: 64, g: 0, in_air: true, going_right: true, alive: true
-		},
+		player: Player::new(),
 
 		level_width: 0,
 		level_height: 0,
@@ -354,7 +289,7 @@ fn main() -> Result<(), String> {
 			}
 
 			for block in &lvl.blocks {
-				if utils::aabb_test(lvl.player.x, lvl.player.y, BLOCK_SIZE, block.0, block.1, BLOCK_SIZE) {
+				if aabb_test(lvl.player.x, lvl.player.y, BLOCK_SIZE, block.0, block.1, BLOCK_SIZE) {
 					// Player hit obstacle on his left
 					if block.0 < lvl.player.x {
 						lvl.player.x = block.0 + BLOCK_SIZE;
@@ -385,7 +320,7 @@ fn main() -> Result<(), String> {
 		}
 
 		for block in &lvl.blocks {
-			if utils::aabb_test(lvl.player.x, lvl.player.y, BLOCK_SIZE, block.0, block.1, BLOCK_SIZE) {
+			if aabb_test(lvl.player.x, lvl.player.y, BLOCK_SIZE, block.0, block.1, BLOCK_SIZE) {
 				lvl.player.g = 0;
 
 				// Player hit obstacle with his head
@@ -404,7 +339,7 @@ fn main() -> Result<(), String> {
 		// Touching an enemy kills
 		if lvl.player.alive {
 			for drone in &mut lvl.drones {
-				if utils::aabb_test(lvl.player.x, lvl.player.y, BLOCK_SIZE, drone.x, drone.y, BLOCK_SIZE) {
+				if aabb_test(lvl.player.x, lvl.player.y, BLOCK_SIZE, drone.x, drone.y, BLOCK_SIZE) {
 					lvl.player.alive = false;
 				}
 			}
@@ -447,7 +382,7 @@ fn main() -> Result<(), String> {
 		// Bullets hits on a drone removes health
 		for i in (0..lvl.drones.len()).rev() {
 			for j in (0..lvl.bullets.len()).rev() {
-				if utils::aabb_test(lvl.bullets[j].x, lvl.bullets[j].y, BULLET_SIZE, lvl.drones[i].x, lvl.drones[i].y, BLOCK_SIZE) {
+				if aabb_test(lvl.bullets[j].x, lvl.bullets[j].y, BULLET_SIZE, lvl.drones[i].x, lvl.drones[i].y, BLOCK_SIZE) {
 					if lvl.drones[i].health > 1 {
 						lvl.drones[i].health -= 1;
 					} else {
@@ -461,7 +396,7 @@ fn main() -> Result<(), String> {
 
 		// Bullet hits on a player kills him
 		for i in (0..lvl.bullets.len()).rev() {
-			if utils::aabb_test(lvl.bullets[i].x, lvl.bullets[i].y, BULLET_SIZE, lvl.player.x, lvl.player.y, BLOCK_SIZE) {
+			if aabb_test(lvl.bullets[i].x, lvl.bullets[i].y, BULLET_SIZE, lvl.player.x, lvl.player.y, BLOCK_SIZE) {
 				if lvl.player.alive {
 					lvl.bullets.remove(i);
 					lvl.player.alive = false;
@@ -471,7 +406,7 @@ fn main() -> Result<(), String> {
 
 		// Delete bullets that hit walls
 		for block in &mut lvl.blocks {
-			lvl.bullets.retain(|i| !utils::aabb_test(i.x, i.y, BULLET_SIZE, block.0, block.1, BLOCK_SIZE));
+			lvl.bullets.retain(|i| !aabb_test(i.x, i.y, BULLET_SIZE, block.0, block.1, BLOCK_SIZE));
 		}
 
 
@@ -479,7 +414,7 @@ fn main() -> Result<(), String> {
 
 		for drone in &mut lvl.drones {
 
-			let mut is_close = utils::distance2d(lvl.player.x, lvl.player.y, drone.x, drone.y) < 280;
+			let mut is_close = distance2d(lvl.player.x, lvl.player.y, drone.x, drone.y) < 280;
 
 			let mut line_of_sight = true;
 
@@ -488,7 +423,7 @@ fn main() -> Result<(), String> {
 
 			for block in &lvl.blocks {
 				let intersec =
-					utils::line2box(lvl.player.x + BLOCK_SIZE / 2, lvl.player.y + BLOCK_SIZE / 2,
+					line2box(lvl.player.x + BLOCK_SIZE / 2, lvl.player.y + BLOCK_SIZE / 2,
 						drone.x + BLOCK_SIZE / 2, drone.y + BLOCK_SIZE / 2,
 						block.0, block.1, BLOCK_SIZE);
 
@@ -527,7 +462,7 @@ fn main() -> Result<(), String> {
 
 					// Check collisions on the Y axis
 					for block in &lvl.blocks {
-						if utils::aabb_test(drone.x, drone.y, BLOCK_SIZE, block.0, block.1, BLOCK_SIZE) {
+						if aabb_test(drone.x, drone.y, BLOCK_SIZE, block.0, block.1, BLOCK_SIZE) {
 							// Drone hit obstacle above
 							if block.1 < drone.y {
 								drone.y = block.1 + BLOCK_SIZE;
@@ -567,7 +502,7 @@ fn main() -> Result<(), String> {
 
 					// Check collisions on the X axis
 					for block in &lvl.blocks {
-						if utils::aabb_test(drone.x, drone.y, BLOCK_SIZE, block.0, block.1, BLOCK_SIZE) {
+						if aabb_test(drone.x, drone.y, BLOCK_SIZE, block.0, block.1, BLOCK_SIZE) {
 							// Drone hit obstacle on his left
 							if block.0 < drone.x {
 								drone.x = block.0 + BLOCK_SIZE;
