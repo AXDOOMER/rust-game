@@ -10,8 +10,8 @@ jobs:
       - run: sudo apt-get -y install libsdl2-dev
 
       - run:
-          name: Cargo
-          command: cargo run
+          name: Compilation
+          command: cargo build
 
 workflows:
   main:
