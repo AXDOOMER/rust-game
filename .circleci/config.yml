@@ -3,7 +3,7 @@ version: 2.1
 jobs:
   build:
     docker:
-      - image: cimg/rust:1.43.0
+      - image: circleci/rust:1.43.0
     steps:
       - checkout
 
