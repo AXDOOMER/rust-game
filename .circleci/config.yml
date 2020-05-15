@@ -10,7 +10,7 @@ jobs:
     steps:
       - checkout
 
-      - run: sudo apt-get -y install libsdl2-dev
+      - run: apt-get -y install libsdl2-dev
 
       - run:
           name: Cargo
