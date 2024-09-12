@@ -496,7 +496,7 @@ fn main() -> Result<(), String> {
 					// Drone can's see the player
 					is_close = false;
 					line_of_sight = false;
-					//break;
+					break;
 				}
 			}
 

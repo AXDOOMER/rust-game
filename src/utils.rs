@@ -38,13 +38,11 @@ pub fn line2line(x1: i32, y1: i32, x2: i32, y2: i32, x3: i32, y3: i32, x4: i32, 
 // x2, y2: where the line finishes
 // bx, by, bs: where the box is and its size
 pub fn line2box(x1: i32, y1: i32, x2: i32, y2: i32, bx: i32, by: i32, bs: i32) -> bool {
-	let left   = line2line(x1, y1, x2, y2, bx,      by, bx,      by + bs);
-	let right  = line2line(x1, y1, x2, y2, bx + bs, by, bx + bs, by + bs);
+	// use lines in an X pattern to check for intersections
+	let cross1 = line2line(x1, y1, x2, y2, bx     , by, bx + bs, by + bs);
+	let cross2 = line2line(x1, y1, x2, y2, bx + bs, by, bx     , by + bs);
 
-	let top    = line2line(x1, y1, x2, y2, bx, by,      bx + bs, by);
-	let bottom = line2line(x1, y1, x2, y2, bx, by + bs, bx + bs, by + bs);
-
-	if left || right || top || bottom {
+	if cross1 || cross2 {
 		return true;
 	}
 
